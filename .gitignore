@@ -16,3 +16,7 @@ env/
 .idea/
 .DS_Store
 Thumbs.db
+# Diagramas - backups temporales de draw.io
+*.drawio.bkp
+*.dtmp
+.$*.drawio.bkp

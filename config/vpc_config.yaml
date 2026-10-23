@@ -1,11 +1,95 @@
-VPC:
-  Name: MyVPC
-  CidrBlock: 10.0.0.0/16
+# =====================================================================
+# Fase 1 - Diseno inicial de la red
+# Reto Creci: Diseno de redes (advanced-l2)
+#
+# Region primaria : us-east-1 (Virginia)
+# Estrategia DR   : replica en us-west-2 (Oregon) - documentada, no construida
+#
+# Segmentacion: 3 capas (web / app / data) x 2 AZs = 6 subredes /27
+# Cada subred /27 = 32 IPs totales, 27 utilizables (AWS reserva 5).
+# Se dejan huecos /27 entre subredes de una misma capa para expansion futura.
+# =====================================================================
 
+VPC:
+  Name: pragma-test-vpc
+  CidrBlock: 10.10.0.0/16
+  Region: us-east-1
+
+# ---------------------------------------------------------------------
+# Subredes (segmentos de red)
+# Tier indica la capa; Public=true solo para la capa web.
+# ---------------------------------------------------------------------
 Subnets:
-  - SubnetName: PublicSubnet1
-    CidrBlock: 10.0.1.0/24
-    AvailabilityZone: us-west-2a
-  - SubnetName: PrivateSubnet1
-    CidrBlock: 10.0.2.0/24
-    AvailabilityZone: us-west-2a
+  # --- Capa WEB (publica) -> salida directa a internet via IGW ---
+  - SubnetName: pragma-test-subnet-web-01
+    CidrBlock: 10.10.0.0/27        # .0 - .31
+    AvailabilityZone: us-east-1a
+    Tier: web
+    Public: true
+  - SubnetName: pragma-test-subnet-web-02
+    CidrBlock: 10.10.0.64/27       # .64 - .95  (hueco .32/27 libre para expansion)
+    AvailabilityZone: us-east-1b
+    Tier: web
+    Public: true
+
+  # --- Capa APP (privada) -> salida a internet via NAT Gateway ---
+  - SubnetName: pragma-test-subnet-app-01
+    CidrBlock: 10.10.1.0/27        # 1.0 - 1.31
+    AvailabilityZone: us-east-1a
+    Tier: app
+    Public: false
+  - SubnetName: pragma-test-subnet-app-02
+    CidrBlock: 10.10.1.64/27       # 1.64 - 1.95 (hueco 1.32/27 libre)
+    AvailabilityZone: us-east-1b
+    Tier: app
+    Public: false
+
+  # --- Capa DATA (privada aislada) -> SIN salida a internet ---
+  - SubnetName: pragma-test-subnet-data-01
+    CidrBlock: 10.10.2.0/27        # 2.0 - 2.31
+    AvailabilityZone: us-east-1a
+    Tier: data
+    Public: false
+  - SubnetName: pragma-test-subnet-data-02
+    CidrBlock: 10.10.2.64/27       # 2.64 - 2.95 (hueco 2.32/27 libre)
+    AvailabilityZone: us-east-1b
+    Tier: data
+    Public: false
+
+# ---------------------------------------------------------------------
+# Puertas de enlace (network connections) - se implementan en Fase 2
+# ---------------------------------------------------------------------
+Gateways:
+  InternetGateway:
+    Name: pragma-test-igw-01       # uno por VPC
+  NatGateway:
+    Name: pragma-test-natgw-01     # reside en subnet-web-01 (us-east-1a)
+    ElasticIP: pragma-test-eip-natgw-01
+    # Nota HA: en produccion, un NAT GW por AZ (natgw-02 en us-east-1b).
+
+# ---------------------------------------------------------------------
+# Tablas de enrutamiento (reglas de enrutamiento iniciales)
+# La ruta "local" 10.10.0.0/16 la crea AWS automaticamente en todas.
+# ---------------------------------------------------------------------
+RouteTables:
+  - Name: pragma-test-rt-public-01
+    AssociatedSubnets:
+      - pragma-test-subnet-web-01
+      - pragma-test-subnet-web-02
+    Routes:
+      - Destination: 0.0.0.0/0
+        Target: pragma-test-igw-01
+
+  - Name: pragma-test-rt-private-app-01
+    AssociatedSubnets:
+      - pragma-test-subnet-app-01
+      - pragma-test-subnet-app-02
+    Routes:
+      - Destination: 0.0.0.0/0
+        Target: pragma-test-natgw-01
+
+  - Name: pragma-test-rt-private-data-01
+    AssociatedSubnets:
+      - pragma-test-subnet-data-01
+      - pragma-test-subnet-data-02
+    Routes: []   # aislada: sin ruta a internet. Usar VPC Endpoints para servicios AWS.
